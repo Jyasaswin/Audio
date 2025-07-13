@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search Interface</title>
+    <style>
+        body {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        
+        .logo {
+            font-size: 3rem;
+            font-weight: 300;
+            margin-bottom: 2rem;
+            color: #333;
+        }
+        
+        .search-container {
+            width: 80%;
+            max-width: 600px;
+            position: relative;
+            margin-top: 20vh;
+        }
+        
+        .search-box {
+            width: 100%;
+            padding: 15px 20px;
+            font-size: 1.2rem;
+            border: none;
+            border-radius: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            outline: none;
+        }
+        
+        .voice-btn {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #555;
+            transition: all 0.3s ease;
+        }
+        
+        .voice-btn:hover {
+            color: #333;
+        }
+        
+        .recording-status {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #666;
+            min-height: 20px;
+        }
+        
+        .recording-animation {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background-color: red;
+            border-radius: 50%;
+            margin-right: 5px;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(0.8); opacity: 0.5; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(0.8); opacity: 0.5; }
+        }
+        
+        .recordings-list {
+            margin-top: 30px;
+            width: 80%;
+            max-width: 600px;
+        }
+        
+        .recording-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        audio {
+            width: 100%;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="logo">AI Search</div>
+    
+    <div class="search-container">
+        <form id="searchForm" action="/search" method="get">
+            <input type="text" class="search-box" name="q" placeholder="Ask me anything..." autocomplete="off">
+            <button type="button" class="voice-btn" id="voiceBtn" title="Click to record, double-click for voice typing">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                    <line x1="12" y1="19" x2="12" y2="23"></line>
+                    <line x1="8" y1="23" x2="16" y1="23"></line>
+                </svg>
+            </button>
+        </form>
+        <div class="recording-status" id="recordingStatus"></div>
+    </div>
+    
+    <div class="recordings-list" id="recordingsList"></div>
+
+<script>
+    const voiceBtn = document.getElementById('voiceBtn');
+    const searchBox = document.querySelector('.search-box');
+    const recordingStatus = document.getElementById('recordingStatus');
+    const searchForm = document.getElementById('searchForm');
+    const recordingsList = document.getElementById('recordingsList');
+    let mediaRecorder;
+    let audioChunks = [];
+    let isRecording = false;
+    
+    document.addEventListener('DOMContentLoaded', fetchRecordings);
+    
+    async function fetchRecordings() {
+        try {
+            const response = await fetch('/get-recordings/');
+            const recordings = await response.json();
+            
+            if (recordings.length > 0) {
+                recordingsList.innerHTML = '<h3>Your Recent Recordings</h3>';
+                recordings.forEach(recording => {
+                    addRecordingToUI(recording);
+                });
+            }
+        } catch (error) {
+            console.error('Error fetching recordings:', error);
+        }
+    }
+    
+    function addRecordingToUI(recording) {
+        const recordingItem = document.createElement('div');
+        recordingItem.className = 'recording-item';
+        recordingItem.innerHTML = `
+            <p>Recorded on ${new Date(recording.created_at).toLocaleString()}</p>
+            <audio controls>
+                <source src="${recording.audio_file}" type="audio/wav">
+                Your browser does not support the audio element.
+            </audio>
+            ${recording.transcript ? `<p><strong>Transcript:</strong> ${recording.transcript}</p>` : ''}
+            <button class="delete-btn" data-id="${recording.id}">Delete</button>
+        `;
+        recordingsList.appendChild(recordingItem);
+    }
+    
+    voiceBtn.addEventListener('click', async () => {
+        if (isRecording) {
+            mediaRecorder.stop();
+            isRecording = false;
+            return;
+        }
+        
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+            
+            mediaRecorder.ondataavailable = (event) => {
+                audioChunks.push(event.data);
+            };
+            
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                stream.getTracks().forEach(track => track.stop());
+                
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'recording.wav');
+                formData.append('transcript', searchBox.value);
+                
+                try {
+                    recordingStatus.innerHTML = '<span class="processing-animation"></span> Saving recording...';
+                    
+                    const response = await fetch('/save-recording/', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    if (result.success) {
+                        recordingStatus.textContent = 'Recording saved successfully!';
+                        addRecordingToUI(result.recording);
+                        
+                        if (searchBox.value) {
+                            searchForm.submit();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error saving recording:', error);
+                    recordingStatus.textContent = 'Error saving recording';
+                }
+            };
+            
+            mediaRecorder.start();
+            isRecording = true;
+            recordingStatus.innerHTML = '<span class="recording-animation"></span> Recording... Click again to stop';
+            voiceBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="red" stroke="red" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><rect x="6" y="6" width="12" height="12"/></svg>';
+            
+        } catch (error) {
+            console.error('Error accessing microphone:', error);
+            recordingStatus.textContent = 'Microphone access denied';
+        }
+    });
+    
+    voiceBtn.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        if (!('webkitSpeechRecognition' in window)) {
+            alert('Your browser does not support voice recognition. Please use Chrome or Edge.');
+            return;
+        }
+        
+        const recognition = new webkitSpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        
+        recognition.onstart = () => {
+            searchBox.placeholder = 'Listening...';
+            voiceBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="red" stroke="red" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y1="23"></line></svg>';
+            recordingStatus.textContent = 'Listening for voice input...';
+        };
+        
+        recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            searchBox.value = transcript;
+            recordingStatus.textContent = 'Voice input received';
+        };
+        
+        recognition.onerror = (event) => {
+            searchBox.placeholder = 'Error occurred in recognition. Try again.';
+            recordingStatus.textContent = 'Error: ' + event.error;
+        };
+        
+        recognition.onend = () => {
+            searchBox.placeholder = 'Ask me anything...';
+            voiceBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y1="23"></line></svg>';
+        };
+        
+        recognition.start();
+    });
+</script>
+</body>
+</html>
